@@ -68,7 +68,8 @@ public class ERequestApp {
      * @param args the command line arguments.
      */
     public static void main(String[] args) {
-        SpringApplication app = new SpringApplication(ERequestApp.class);
+        boolean demoMode = Boolean.parseBoolean(System.getenv().getOrDefault("DEMO_MODE", "false"));
+        SpringApplication app = new SpringApplication(demoMode ? com.mycompany.erequest.demo.ERequestDemoApp.class : ERequestApp.class);
         DefaultProfileUtil.addDefaultProfile(app);
         Environment env = app.run(args).getEnvironment();
         logApplicationStartup(env);

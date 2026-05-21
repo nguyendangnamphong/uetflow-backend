@@ -8,6 +8,7 @@ import com.mycompany.erequest.domain.TicketStep;
 import com.mycompany.erequest.repository.TicketRepository;
 import com.mycompany.erequest.repository.TicketStepRepository;
 import com.mycompany.erequest.security.SecurityUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,13 +19,20 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/request")
 public class ERequestCustomResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(ERequestCustomResource.class);
+    private static final String DEFAULT_DEMO_CREATOR = "demo.requester@uetflow.local";
+    private static final String DEFAULT_DEMO_APPROVER = "demo.approver@uetflow.local";
 
     private final EAccountClient eAccountClient;
     private final EFormClient eFormClient;
@@ -46,55 +54,62 @@ public class ERequestCustomResource {
         this.ticketStepRepository = ticketStepRepository;
     }
 
-    /** Get list of published workflows for the home page (from eFlow). */
     @GetMapping("/workflows")
     public ResponseEntity<?> getWorkflows() {
         try {
-            // POST /api/workflow with empty body → returns all flows
-            var result = eFlowClient.getNextNode(0L, 0L); // placeholder, won't work
-            // Fallback: call eFlow list endpoint via a different approach
-        } catch (Exception ignored) {}
-        // Return minimal demo list if eFlow unavailable
+            List<EFlowClient.WorkflowSummaryDTO> flows = eFlowClient.getWorkflows(Map.of());
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (EFlowClient.WorkflowSummaryDTO flow : flows) {
+                if (flow == null || flow.id() == null) {
+                    continue;
+                }
+                Map<String, Object> item = new HashMap<>();
+                item.put("flowId", flow.id());
+                item.put("name", flow.flowName());
+                item.put("flowGroup", flow.flowGroup());
+                item.put("status", flow.status());
+                result.add(item);
+            }
+            if (!result.isEmpty()) {
+                return ResponseEntity.ok(result);
+            }
+        } catch (Exception e) {
+            LOG.warn("Could not fetch workflows from eFlow: {}", e.getMessage());
+        }
+
         return ResponseEntity.ok(
             List.of(
-                Map.of("flowId", 1, "name", "Quy trình 1", "created_at", Instant.now().toString()),
-                Map.of("flowId", 2, "name", "Quy trình 2", "created_at", Instant.now().toString())
+                Map.of("flowId", 1, "name", "Demo Flow 1", "status", "Demo"),
+                Map.of("flowId", 2, "name", "Demo Flow 2", "status", "Demo")
             )
         );
     }
 
-    /** Init a new ticket and create first ticket_step with performer from eFlow. */
     @PostMapping("/ticket/init")
-    public ResponseEntity<?> initTicket(@RequestBody(required = false) InitTicketDTO dto) {
-        String creatorEmail = SecurityUtils.getCurrentUserLogin().orElse("anonymous@uet.vn");
+    public ResponseEntity<?> initTicket(HttpServletRequest request, @RequestBody(required = false) InitTicketDTO dto) {
+        String creatorEmail = resolveActorEmail(request, DEFAULT_DEMO_CREATOR);
         Long flowId = dto != null && dto.flowId() != null ? dto.flowId() : 1L;
-        String ticketName = dto != null && dto.ticketName() != null ? dto.ticketName() : "Yeu cau moi";
+        String ticketName = dto != null && dto.ticketName() != null ? dto.ticketName() : "Demo request";
 
-        // Create ticket
         Ticket ticket = new Ticket();
         ticket.setFlowId(flowId);
         ticket.setTicketName(ticketName);
         ticket.setCreatorEmail(creatorEmail);
-        ticket.setStatus(1); // Đang thực hiện
+        ticket.setStatus(1);
         ticket.setVersion(1);
         ticket.setCreatedAt(Instant.now());
         ticket.setUpdatedAt(Instant.now());
         ticket = ticketRepository.save(ticket);
 
-        // Create first ticket_step using eFlow first-action-plan
-        String performerEmail = "approver@uetflow.com"; // default fallback
-        Long firstNodeId = null;
+        String performerEmail = DEFAULT_DEMO_APPROVER;
+        Long firstNodeId = 1L;
         try {
             Map<String, Object> plan = eFlowClient.getFirstActionPlan(flowId);
-            if (plan != null && plan.get("performers") instanceof List<?> performers && !performers.isEmpty()) {
-                Object firstPerf = performers.get(0);
-                if (firstPerf instanceof Map<?, ?> pm) {
-                    Object uid = pm.get("userId");
-                    if (uid != null) performerEmail = String.valueOf(uid);
-                }
+            if (plan != null && plan.get("nodeId") instanceof Number nodeId) {
+                firstNodeId = nodeId.longValue();
             }
-            if (plan != null && plan.get("nodeId") instanceof Number nid) {
-                firstNodeId = nid.longValue();
+            if (plan != null && plan.get("performers") instanceof List<?> performers && !performers.isEmpty()) {
+                performerEmail = readPerformer(performers.get(0), DEFAULT_DEMO_APPROVER);
             }
         } catch (Exception e) {
             LOG.warn("Could not fetch first action plan from eFlow for flowId={}: {}", flowId, e.getMessage());
@@ -102,9 +117,9 @@ public class ERequestCustomResource {
 
         TicketStep step = new TicketStep();
         step.setTicket(ticket);
-        step.setNodeId(firstNodeId != null ? firstNodeId : 1L);
+        step.setNodeId(firstNodeId);
         step.setPerformerEmail(performerEmail);
-        step.setStatus(0); // Chờ xử lý
+        step.setStatus(0);
         step.setStartedAt(Instant.now());
         step = ticketStepRepository.save(step);
 
@@ -123,37 +138,37 @@ public class ERequestCustomResource {
         return ResponseEntity.ok(List.of());
     }
 
-    /** Get all tickets created by current user. */
     @GetMapping("/tickets/my-requests")
     @Transactional
-    public ResponseEntity<?> getMyRequests() {
-        String email = SecurityUtils.getCurrentUserLogin().orElse("anonymous");
+    public ResponseEntity<?> getMyRequests(HttpServletRequest request) {
+        String email = resolveActorEmail(request, DEFAULT_DEMO_CREATOR);
         List<Ticket> tickets = ticketRepository.findAllByCreatorEmail(email);
         List<Map<String, Object>> content = new ArrayList<>();
-        for (Ticket t : tickets) {
+        for (Ticket ticket : tickets) {
             Map<String, Object> item = new HashMap<>();
-            item.put("ticketId", t.getId());
-            item.put("flowId", t.getFlowId());
-            item.put("ticketName", t.getTicketName());
-            item.put("flowName", t.getTicketName());
-            item.put("status", t.getStatus());
-            item.put("createdDate", t.getCreatedAt() != null ? t.getCreatedAt().toString() : null);
-            item.put("requesterEmail", t.getCreatorEmail());
+            item.put("ticketId", ticket.getId());
+            item.put("flowId", ticket.getFlowId());
+            item.put("ticketName", ticket.getTicketName());
+            item.put("flowName", ticket.getTicketName());
+            item.put("status", ticket.getStatus());
+            item.put("createdDate", ticket.getCreatedAt() != null ? ticket.getCreatedAt().toString() : null);
+            item.put("requesterEmail", ticket.getCreatorEmail());
             content.add(item);
         }
         return ResponseEntity.ok(Map.of("content", content, "totalElements", content.size()));
     }
 
-    /** Get pending tasks for current user (ticket_steps where performer_email = me AND status = 0). */
     @GetMapping("/tickets/pending-tasks")
     @Transactional
-    public ResponseEntity<?> getPendingTasks() {
-        String email = SecurityUtils.getCurrentUserLogin().orElse("anonymous");
+    public ResponseEntity<?> getPendingTasks(HttpServletRequest request) {
+        String email = resolveActorEmail(request, DEFAULT_DEMO_APPROVER);
         List<TicketStep> steps = ticketStepRepository.findAllByPerformerEmailAndStatus(email, 0);
         List<Map<String, Object>> content = new ArrayList<>();
         for (TicketStep step : steps) {
             Ticket ticket = step.getTicket();
-            if (ticket == null) continue;
+            if (ticket == null) {
+                continue;
+            }
             Map<String, Object> item = new HashMap<>();
             item.put("ticketId", ticket.getId());
             item.put("flowId", ticket.getFlowId());
@@ -174,24 +189,23 @@ public class ERequestCustomResource {
         return ResponseEntity.ok(Map.of("message", "Export triggered"));
     }
 
-    /** Get real ticket detail from DB. */
     @GetMapping("/ticket/{ticketId}/detail")
     public ResponseEntity<?> getTicketDetail(@PathVariable("ticketId") Long ticketId) {
         Optional<Ticket> opt = ticketRepository.findById(ticketId);
         if (opt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
-        Ticket t = opt.orElseThrow();
+        Ticket ticket = opt.orElseThrow();
         Map<String, Object> resp = new HashMap<>();
-        resp.put("ticketId", t.getId());
-        resp.put("flowId", t.getFlowId());
-        resp.put("ticketName", t.getTicketName());
-        resp.put("status", t.getStatus());
-        resp.put("version", t.getVersion());
-        resp.put("creatorEmail", t.getCreatorEmail());
-        resp.put("currentStepId", t.getCurrentStepId());
-        resp.put("createdAt", t.getCreatedAt() != null ? t.getCreatedAt().toString() : null);
-        resp.put("completedAt", t.getCompletedAt() != null ? t.getCompletedAt().toString() : null);
+        resp.put("ticketId", ticket.getId());
+        resp.put("flowId", ticket.getFlowId());
+        resp.put("ticketName", ticket.getTicketName());
+        resp.put("status", ticket.getStatus());
+        resp.put("version", ticket.getVersion());
+        resp.put("creatorEmail", ticket.getCreatorEmail());
+        resp.put("currentStepId", ticket.getCurrentStepId());
+        resp.put("createdAt", ticket.getCreatedAt() != null ? ticket.getCreatedAt().toString() : null);
+        resp.put("completedAt", ticket.getCompletedAt() != null ? ticket.getCompletedAt().toString() : null);
         return ResponseEntity.ok(resp);
     }
 
@@ -202,8 +216,7 @@ public class ERequestCustomResource {
             Optional<TicketStep> stepOpt = ticketStepRepository.findById(opt.orElseThrow().getCurrentStepId());
             if (stepOpt.isPresent()) {
                 try {
-                    Map<String, Object> plan = eFlowClient.getActionPlan(stepOpt.orElseThrow().getNodeId());
-                    return ResponseEntity.ok(plan);
+                    return ResponseEntity.ok(eFlowClient.getActionPlan(stepOpt.orElseThrow().getNodeId()));
                 } catch (Exception e) {
                     LOG.warn("Could not get action plan: {}", e.getMessage());
                 }
@@ -213,19 +226,21 @@ public class ERequestCustomResource {
     }
 
     @PostMapping("/ticket/{ticketId}/submit")
-    public ResponseEntity<?> submitTicket(@PathVariable("ticketId") Long ticketId, @RequestBody SubmitRequestDTO dto) {
+    public ResponseEntity<?> submitTicket(
+        HttpServletRequest request,
+        @PathVariable("ticketId") Long ticketId,
+        @RequestBody SubmitRequestDTO dto
+    ) {
         Optional<Ticket> opt = ticketRepository.findById(ticketId);
         if (opt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         Ticket ticket = opt.orElseThrow();
 
-        // Version check
         if (dto.version() != null && dto.version() < ticket.getVersion()) {
             return ResponseEntity.status(409).body(Map.of("error", "Version conflict"));
         }
 
-        // Save form data to eForm
         if (dto.formData() != null) {
             try {
                 eFormClient.saveFormData(new EFormClient.FormRecordRequestDTO("F_" + ticketId, dto.formData()));
@@ -234,48 +249,41 @@ public class ERequestCustomResource {
             }
         }
 
-        // Find current step and mark done
+        Long currentNodeId = null;
         if (ticket.getCurrentStepId() != null) {
             ticketStepRepository
                 .findById(ticket.getCurrentStepId())
                 .ifPresent(step -> {
-                    step.setStatus(1); // Hoàn thành
+                    step.setStatus(1);
                     step.setFinishedAt(Instant.now());
                     ticketStepRepository.save(step);
                 });
+            currentNodeId = ticketStepRepository.findById(ticket.getCurrentStepId()).map(TicketStep::getNodeId).orElse(null);
         }
 
-        // Advance to next node via eFlow
         String nextPerformer = null;
         Long nextNodeId = null;
-        if (ticket.getCurrentStepId() != null) {
-            Optional<TicketStep> curStep = ticketStepRepository.findById(ticket.getCurrentStepId());
-            if (curStep.isPresent()) {
-                try {
-                    Map<String, Object> next = eFlowClient.getNextNode(ticket.getFlowId(), curStep.orElseThrow().getNodeId());
-                    Object nextId = next.get("nextNodeId");
-                    if (nextId != null) {
-                        nextNodeId = Long.valueOf(String.valueOf(nextId));
-                        Map<String, Object> plan = eFlowClient.getActionPlan(nextNodeId);
-                        if (plan.get("performers") instanceof List<?> performers && !performers.isEmpty()) {
-                            Object firstPerf = performers.get(0);
-                            if (firstPerf instanceof Map<?, ?> pm) {
-                                Object uid = pm.get("userId");
-                                if (uid != null) nextPerformer = String.valueOf(uid);
-                            }
-                        }
+        if (currentNodeId != null) {
+            try {
+                Map<String, Object> next = eFlowClient.getNextNode(ticket.getFlowId(), currentNodeId);
+                Object nextId = next.get("nextNodeId");
+                if (nextId != null) {
+                    nextNodeId = Long.valueOf(String.valueOf(nextId));
+                    Map<String, Object> plan = eFlowClient.getActionPlan(nextNodeId);
+                    if (plan.get("performers") instanceof List<?> performers && !performers.isEmpty()) {
+                        nextPerformer = readPerformer(performers.get(0), resolveActorEmail(request, DEFAULT_DEMO_APPROVER));
                     }
-                } catch (Exception e) {
-                    LOG.warn("Could not get next node: {}", e.getMessage());
                 }
+            } catch (Exception e) {
+                LOG.warn("Could not get next node: {}", e.getMessage());
             }
         }
 
-        if (nextNodeId != null && nextPerformer != null) {
+        if (nextNodeId != null) {
             TicketStep newStep = new TicketStep();
             newStep.setTicket(ticket);
             newStep.setNodeId(nextNodeId);
-            newStep.setPerformerEmail(nextPerformer);
+            newStep.setPerformerEmail(nextPerformer != null ? nextPerformer : resolveActorEmail(request, DEFAULT_DEMO_APPROVER));
             newStep.setStatus(0);
             newStep.setStartedAt(Instant.now());
             newStep = ticketStepRepository.save(newStep);
@@ -293,7 +301,6 @@ public class ERequestCustomResource {
         return ResponseEntity.ok(response);
     }
 
-    /** Approve/Reject/Cancel action on ticket. Updates ticket status. */
     @PostMapping("/ticket/{ticketId}/action")
     public ResponseEntity<?> takeAction(@PathVariable("ticketId") Long ticketId, @RequestBody Map<String, Object> payload) {
         Optional<Ticket> opt = ticketRepository.findById(ticketId);
@@ -304,16 +311,15 @@ public class ERequestCustomResource {
         Ticket ticket = opt.orElseThrow();
         String action = String.valueOf(payload.getOrDefault("action", ""));
 
-        // Mark current step as done
         if (ticket.getCurrentStepId() != null) {
             ticketStepRepository
                 .findById(ticket.getCurrentStepId())
                 .ifPresent(step -> {
                     step.setFinishedAt(Instant.now());
                     if ("APPROVE".equals(action)) {
-                        step.setStatus(1); // Hoàn thành
+                        step.setStatus(1);
                     } else if ("REJECT".equals(action)) {
-                        step.setStatus(2); // Từ chối
+                        step.setStatus(2);
                     }
                     ticketStepRepository.save(step);
                 });
@@ -321,11 +327,11 @@ public class ERequestCustomResource {
 
         switch (action) {
             case "APPROVE" -> {
-                ticket.setStatus(2); // Hoàn thành
+                ticket.setStatus(2);
                 ticket.setCompletedAt(Instant.now());
             }
-            case "REJECT" -> ticket.setStatus(4); // Từ chối
-            case "CANCEL" -> ticket.setStatus(3); // Hủy
+            case "REJECT" -> ticket.setStatus(4);
+            case "CANCEL" -> ticket.setStatus(3);
             default -> {}
         }
         ticket.setUpdatedAt(Instant.now());
@@ -342,14 +348,14 @@ public class ERequestCustomResource {
     public ResponseEntity<?> getHistory(@PathVariable("ticketId") Long ticketId) {
         List<TicketStep> steps = ticketStepRepository.findAllByTicketId(ticketId);
         List<Map<String, Object>> history = new ArrayList<>();
-        for (TicketStep s : steps) {
+        for (TicketStep step : steps) {
             Map<String, Object> item = new HashMap<>();
-            item.put("stepId", s.getId());
-            item.put("nodeId", s.getNodeId());
-            item.put("performerEmail", s.getPerformerEmail());
-            item.put("status", s.getStatus());
-            item.put("startedAt", s.getStartedAt() != null ? s.getStartedAt().toString() : null);
-            item.put("finishedAt", s.getFinishedAt() != null ? s.getFinishedAt().toString() : null);
+            item.put("stepId", step.getId());
+            item.put("nodeId", step.getNodeId());
+            item.put("performerEmail", step.getPerformerEmail());
+            item.put("status", step.getStatus());
+            item.put("startedAt", step.getStartedAt() != null ? step.getStartedAt().toString() : null);
+            item.put("finishedAt", step.getFinishedAt() != null ? step.getFinishedAt().toString() : null);
             history.add(item);
         }
         return ResponseEntity.ok(history);
@@ -383,4 +389,37 @@ public class ERequestCustomResource {
     public record SubmitRequestDTO(Long ticketId, Object formData, Integer version) {}
 
     public record InitTicketDTO(Long flowId, String ticketName) {}
+
+    private String resolveActorEmail(HttpServletRequest request, String fallbackEmail) {
+        String currentUser = SecurityUtils.getCurrentUserLogin().orElse(null);
+        if (currentUser != null && !currentUser.isBlank() && !"anonymous".equalsIgnoreCase(currentUser) && !"anonymousUser".equalsIgnoreCase(currentUser)) {
+            return currentUser;
+        }
+
+        String headerEmail = request.getHeader("X-Demo-User");
+        if (headerEmail != null && !headerEmail.isBlank()) {
+            return headerEmail.trim();
+        }
+
+        String queryEmail = request.getParameter("demoUserEmail");
+        if (queryEmail != null && !queryEmail.isBlank()) {
+            return queryEmail.trim();
+        }
+
+        return fallbackEmail;
+    }
+
+    private String readPerformer(Object performerObject, String fallbackEmail) {
+        if (performerObject instanceof Map<?, ?> map) {
+            Object email = map.get("email");
+            if (email != null && !String.valueOf(email).isBlank()) {
+                return String.valueOf(email);
+            }
+            Object userId = map.get("userId");
+            if (userId != null && !String.valueOf(userId).isBlank()) {
+                return String.valueOf(userId);
+            }
+        }
+        return fallbackEmail;
+    }
 }

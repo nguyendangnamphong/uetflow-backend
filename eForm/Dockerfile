@@ -1,7 +1,7 @@
 FROM maven:3.9.9-eclipse-temurin-11 AS build
 WORKDIR /workspace
 COPY . .
-RUN chmod +x mvnw && ./mvnw -q -DskipTests -Pprod package
+RUN mvn -q -DskipTests package
 
 FROM eclipse-temurin:11-jre-alpine
 RUN apk add --no-cache curl

@@ -1,13 +1,19 @@
 package com.mycompany.erequest.client;
 
+import java.util.List;
 import java.util.Map;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 
 @FeignClient(name = "eFlowClient", url = "${application.client.eflow.url:http://eflow:8083}")
 public interface EFlowClient {
+    @PostMapping("/api/workflow")
+    List<WorkflowSummaryDTO> getWorkflows(@RequestBody(required = false) Map<String, Object> request);
+
     @GetMapping("/api/workflow/node/{nodeId}/config")
     NodeConfigDTO getNodeConfig(@PathVariable("nodeId") Long nodeId);
 
@@ -19,6 +25,8 @@ public interface EFlowClient {
 
     @GetMapping("/api/internal/flow/{flowId}/first-action-plan")
     Map<String, Object> getFirstActionPlan(@PathVariable("flowId") Long flowId);
+
+    record WorkflowSummaryDTO(Long id, String flowName, String flowGroup, String status) {}
 
     record NodeConfigDTO(
         Long nodeId,

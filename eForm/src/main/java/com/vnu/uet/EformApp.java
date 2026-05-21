@@ -10,7 +10,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.liquibase.LiquibaseProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
@@ -65,7 +64,8 @@ public class EformApp {
      */
     public static void main(String[] args) {
         System.setProperty("io.netty.tryReflectionSetAccessible", "false");
-        SpringApplication app = new SpringApplication(EformApp.class);
+        boolean demoMode = Boolean.parseBoolean(System.getenv().getOrDefault("DEMO_MODE", "false"));
+        SpringApplication app = new SpringApplication(demoMode ? com.vnu.uet.demo.EformDemoApp.class : EformApp.class);
         DefaultProfileUtil.addDefaultProfile(app);
         Environment env = app.run(args).getEnvironment();
         logApplicationStartup(env);

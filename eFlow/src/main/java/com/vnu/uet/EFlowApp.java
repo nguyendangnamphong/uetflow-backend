@@ -65,7 +65,8 @@ public class EFlowApp {
      * @param args the command line arguments.
      */
     public static void main(String[] args) {
-        SpringApplication app = new SpringApplication(EFlowApp.class);
+        boolean demoMode = Boolean.parseBoolean(System.getenv().getOrDefault("DEMO_MODE", "false"));
+        SpringApplication app = new SpringApplication(demoMode ? com.vnu.uet.demo.EFlowDemoApp.class : EFlowApp.class);
         DefaultProfileUtil.addDefaultProfile(app);
         Environment env = app.run(args).getEnvironment();
         logApplicationStartup(env);

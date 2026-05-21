@@ -1,26 +1,28 @@
-# Render deploy checklist
+# Render deploy checklist for Mode C mock
 
 ## What this repo now supports
-- `render.yaml` defines 5 backend services plus a private MySQL service.
-- `eForm/Dockerfile` lets Render build the legacy `eForm` app through Docker like the other services.
-- CORS is set to allow the Firebase Hosting origin `https://datawarehouse-subject.web.app`.
+- `render.yaml` defines `eform`, `eflow`, and `erequest` only.
+- All three run with `DEMO_MODE=true` and do not require MySQL, `eAccount`, or `eAi`.
+- `erequest` uses in-memory request storage.
+- `eflow` and `eform` return mock data but keep the core response shape close to the current frontend contracts.
 
 ## Before you sync Blueprint
 1. Push this repo to GitHub.
-2. Create or connect a Render workspace.
-3. Sync the repository as a Blueprint using `render.yaml`.
-4. Replace the secret values in Render Dashboard:
-   - `SPRING_DATASOURCE_PASSWORD` for every service
-   - `MYSQL_PASSWORD`
-   - `MYSQL_ROOT_PASSWORD`
-   - `GEMINI_API_KEY` for `eai`
+2. Create a Render workspace.
+3. Create `eform` first, then `eflow`, then `erequest` from the Blueprint.
+4. After Render gives you real URLs, update:
+   - `APPLICATION_CLIENT_EFORM_URL` in `eflow`
+   - `APPLICATION_CLIENT_EFLOW_URL` in `erequest`
+5. Redeploy `eflow` and `erequest` after those URL changes.
 
 ## Deploy order
-1. Sync the Blueprint.
-2. Wait for `mysql` to start first.
-3. Verify each backend service starts and passes `/management/health`.
-4. Update the frontend API base URLs if it currently points to local Docker ports.
+1. Sync Blueprint.
+2. Wait for `eform` to become live.
+3. Copy the real `eform` URL into `eflow` env `APPLICATION_CLIENT_EFORM_URL`.
+4. Wait for `eflow` to become live.
+5. Copy the real `eflow` URL into `erequest` env `APPLICATION_CLIENT_EFLOW_URL`.
+6. Wait for `erequest` to become live.
 
-## Notes
-- The database service uses the internal hostname `mysql`, so the JDBC URLs in `render.yaml` match the current Docker setup.
-- If Render rejects the private MySQL service in your workspace, the fallback is to create MySQL manually from the Render dashboard and keep the same JDBC URLs.
+## Demo headers
+- Request creator: `X-Demo-User: demo.requester@uetflow.local`
+- Approver: `X-Demo-User: demo.approver@uetflow.local`

@@ -80,7 +80,8 @@ public class DocformApp {
             // Devtools not found, ignore
         }
 
-        SpringApplication app = new SpringApplication(DocformApp.class);
+        boolean demoMode = Boolean.parseBoolean(System.getenv().getOrDefault("DEMO_MODE", "false"));
+        SpringApplication app = new SpringApplication(demoMode ? com.vnu.uet.demo.DocformDemoApp.class : DocformApp.class);
         DefaultProfileUtil.addDefaultProfile(app);
         Environment env = app.run(args).getEnvironment();
         logApplicationStartup(env);

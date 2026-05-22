@@ -1,6 +1,11 @@
-FROM eclipse-temurin:21-jre-alpine
-RUN apk add --no-cache curl tesseract-ocr
+FROM maven:3.9.9-eclipse-temurin-17 AS build
+WORKDIR /workspace
+COPY . .
+RUN mvn -q -DskipTests package
+
+FROM eclipse-temurin:17-jre-alpine
+RUN apk add --no-cache curl
 WORKDIR /app
-COPY target/docform-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=build /workspace/target/docform-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8085
 ENTRYPOINT ["java", "-jar", "app.jar"]

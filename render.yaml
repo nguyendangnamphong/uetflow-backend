@@ -1,4 +1,25 @@
 services:
+  - name: eaccount
+    type: web
+    runtime: docker
+    rootDir: eAccount
+    dockerfilePath: Dockerfile
+    plan: free
+    envVars:
+      - key: DEMO_MODE
+        value: "true"
+      - key: JHIPSTER_CORS_ALLOWED_ORIGINS
+        value: https://datawarehouse-subject.web.app
+      - key: JHIPSTER_CORS_ALLOWED_METHODS
+        value: "*"
+      - key: JHIPSTER_CORS_ALLOWED_HEADERS
+        value: "*"
+      - key: JHIPSTER_CORS_ALLOW_CREDENTIALS
+        value: "true"
+      - key: JHIPSTER_CORS_MAX_AGE
+        value: "1800"
+    healthCheckPath: /api/account/profile
+
   - name: eform
     type: web
     runtime: docker
@@ -65,3 +86,24 @@ services:
       - key: APPLICATION_CLIENT_EFLOW_URL
         value: https://eflow.onrender.com
     healthCheckPath: /api/request/workflows
+
+  - name: eai
+    type: web
+    runtime: docker
+    rootDir: eAi
+    dockerfilePath: Dockerfile
+    plan: free
+    envVars:
+      - key: DEMO_MODE
+        value: "true"
+      - key: JHIPSTER_CORS_ALLOWED_ORIGINS
+        value: https://datawarehouse-subject.web.app
+      - key: JHIPSTER_CORS_ALLOWED_METHODS
+        value: "*"
+      - key: JHIPSTER_CORS_ALLOWED_HEADERS
+        value: "*"
+      - key: JHIPSTER_CORS_ALLOW_CREDENTIALS
+        value: "true"
+      - key: JHIPSTER_CORS_MAX_AGE
+        value: "1800"
+    healthCheckPath: /api/document-maps/health
